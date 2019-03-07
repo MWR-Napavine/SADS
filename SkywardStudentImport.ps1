@@ -169,7 +169,14 @@ foreach ($user in $userID) {
         New-Item -Path "$homeRootPath\$gradYear\" -name $otherID -ItemType Directory -Erroraction SilentlyContinue
         
         # Directory created, but needs the appropriate permissions added. Powershell permssions are cryptic, but this works:
-        $domainFomratedUsername = "$ntDomain\$otherID" #It needs the usernname in 'domain\usernanme' format.        $permissions = Get-ACL $finalHomeDir #This picks up the currennt permissions.        #The lines below actually defines the new permissions.        $userpermissions = New-Object System.Security.AccessControl.FileSystemAccessRule("$domainFomratedUsername",“FullControl”, “ContainerInherit, ObjectInherit”, “None”, “Allow”)        $permissions.AddAccessRule($userpermissions) #This tells Powershell to appennd the above permissions to the existinng permissions.        Set-ACL $finalHomeDir $permissions #This actually applies the BIG HAMMER permissions to the directory.        $createdUserCount++
+        $domainFomratedUsername = "$ntDomain\$otherID" #It needs the usernname in 'domain\usernanme' format.
+        $permissions = Get-ACL $finalHomeDir #This picks up the currennt permissions.
+
+        #The lines below actually defines the new permissions.
+        $userpermissions = New-Object System.Security.AccessControl.FileSystemAccessRule("$domainFomratedUsername", "FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+        $permissions.AddAccessRule($userpermissions) #This tells Powershell to appennd the above permissions to the existinng permissions.
+        Set-ACL $finalHomeDir $permissions #This actually applies the BIG HAMMER permissions to the directory.
+        $createdUserCount++
         }
 }
 Write-Output "$createdUserCount user(s) created."
