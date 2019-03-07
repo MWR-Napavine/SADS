@@ -1,4 +1,4 @@
-#SkywardStudentImport.ps1 - Created/last updated by Matthew W. Ross (MWR) February 2019. pathway@gmail.com
+#SkywardStudentImport.ps1 - Created/last updated by Matthew W. Ross (MWR) February 2019. mwross@napavineschools.org
 
 #This file gathers the user data provided from the WSIPC students file annd makes changes to AD accordingly.
 #Beware: This file MAKES CHANGES to your active directory. While it WILL NOT delete any users, it does
