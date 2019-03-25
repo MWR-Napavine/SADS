@@ -14,7 +14,7 @@
 $importFile = "C:\SFTP\WSIPC\Student.csv"
 
 # We set where the Logfile is located.
-$logFile = "C:\SFTP\SkywardStudeintImport.log"
+$logFile = "C:\SFTP\SkywardStudentImport.log"
 
 # baseOU is where in the Active Directory we are doing all of our searches and modifications. It will
 # use this to search/modify/create users, and will ignore anything oustide it's scope. Point this to
