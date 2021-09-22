@@ -1,12 +1,15 @@
-#SkywardStudentImport.ps1 - Created/last updated by Matthew W. Ross (MWR) August 2021.
-#mwross@napavineschools.org
+# SADS.ps1, the Skyward Active Directory Sync.
+# Created/last updated by Matthew W. Ross (MWR) September 2021.
+# Previously known as SkywardStudentImport.ps1 
+# mwross@napavineschools.org
 
-#This file gathers the user data provided from the WSIPC students file annd makes changes to AD
-# accordingly. Beware: This file MAKES CHANGES to your active directory. While it WILL NOT delete
-# any users, it does enable, create and disable them.
+# This script gathers the user data provided from a Skyward staff and students file exports and makes 
+# changes to AD accordingly. Beware: This file MAKES CHANGES to your active directory. While it WILL
+# NOT delete any users, it does enable, create and disable them.
 
-#In order to use this, you must have Skyward EXPORT your data to a CSV file with the informatnion
-#you destire. I use FileZilla on a Windows host to create an SFTP, and create a pinhole port 
+#In order to use this, you must have Skyward EXPORT your data to a CSV file with the information
+#you destire. As part of your EXPORT configuration, you can have the created CSV sent to a server via
+# SFTP. I use FileZilla Server on a Windows host to create an SFTP server, and create a pinhole port 
 #forwarding through my firewall so that the Skyward export can reach my server. There are better
 #ways, but this is good enough for now.
 
@@ -16,18 +19,22 @@
 
 #These variables are set based on your desired configuration.
 
-# importFile is the CSV file that is created by your Skyward export. It should be formatted correctly.
+# importFile is the CSV file that is created by your Skyward export.
 $importFile = "C:\SFTP\WSIPC\Student.csv"
 
-# exportFile is intended to create a file that will go back to Skyward. This is not implemented yet.
+# exportFile is intended to create a file that will go back to Skyward.
 $exportFile ="c:\SFTP\ExportedStudnets.csv"
 
 # We set where the Logfile is located. Logs are good. It's nice to see where something went wrong.
-$logFile = "C:\SFTP\SkywardStudentImport.log"
+$logFile = "C:\SFTP\SADS.log"
+
+# A log of only the changes made is sent to a different file. This can be useful to see what SADS
+# modified.
+$changesFile ="C:\SFTP\SADS-Changes.log"
 
 # baseOU is where in the Active Directory we are doing all of our searches and modifications. It will
 # use this to search/modify/create users, and will ignore anything oustide it's scope. Point this to
-# where you student's accounts live in Active Directory.
+# where your student's accounts live in Active Directory.
 $baseOU = "OU=Students,OU=Napavine,DC=Napavine,DC=local"
 
 # We need to set both the UPN and the user's Email address, so we need to configure what the suffix of
@@ -44,7 +51,7 @@ $ntDomain = "napavine"
 # We will only process the file if it's not too old. How many days is too old? Enter the number of days
 # old the file is allowed to be. If the file is older than the provided number of days, the script will
 # end with a warning.
-$accpetableFileAge = "3"
+$accpetableFileAge = 3
 
 # We setup the script so that it does not do anything if too much will be changed. Here we specify how
 # large a change in persentage will be allowed without exiting. For example, if we enter a value of 15, 
@@ -53,34 +60,59 @@ $accpetableFileAge = "3"
 # import file with more than 115 users... this would also be a large change. In either case, the script
 # will exit. If something is wrong, like a blank or misconfigured file, this will prevent accidental
 # user creation and/or changes.
-$acceptablePercentChange = "10"
+$acceptablePercentChange = 5
 
-# Countdown timer. The script pauses to allow the user to cancel any action with a ctrl-c. This is how
-# long the script should wait before executing.
-$countDown = 5
+# Countdown timer. The script pauses to allow the user to cancel before any changes are made with a 
+# ctrl-c. This is how #long the script should wait before executing. Set to 0 (Zero) to skip the
+# countdown altogether.
+$countDown = 0
+
+# We have the option here to run Google Cloud Directory Sync. The best time to do this is after we
+# created the accounts, but we have yet to change the passwords. If we have Google Password Sync on our
+# domain controllers, the passwords should be changed as long as the accounts have been created before
+# we try to change them. So we run this after the accoutn creation, and before we update passwords.
+$runGCDS = $true
+$gcdsProgLocation = "C:\Program Files\Google Cloud Directory Sync\sync-cmd.exe"
+$gcdsConfig = "C:\Program Files\Google Cloud Directory Sync\MWR-WorkInProgress.xml"
 
     #########################################
     ##### End User Configurabel Options #####
     #########################################
 
+Function Write-ToLog {
+    # We want all our outputs to have time stamps. Also, optionally, we want to send some output
+    # to the Changes log file as well. Usage: Write-ToLog "<Text to send>" [-writeToChangelog]
+    Param (
+        $textOutput,
+        [switch]$writeToChangelog
+    )
+    $D="[{0:MM/dd/yy} {0:HH:mm:ss}]" -f (Get-Date)
+    if ($writeToChangelog -eq $false) {
+        Write-Output "$($D) - $textOutput"
+        } else {
+        Write-Output "$($D) - $textOutput" | Tee-Object -FilePath $changesFile -Append
+        }
+    }
+
 # We log this all to a file.
 try {Start-Transcript -LiteralPath $logFile -Append}
 catch { Write-Output "Cannot start Transcript: $_.Exception,Message" }
 
-Write-Output "*********************************************************************"
-Write-Output "SkywardStudentImport script by Matthew W. Ross. Use at your own risk."
+Write-ToLog "************************************************"
+Write-ToLog "SADS - Skyward Active Directory Sync"
+Write-ToLog "Script by Matthew W. Ross. Use at your own risk."
 $timestamp = Get-Date -Format o
-Write-Output "Script run time: $Timestamp"
-Write-Output "Logging to file: $logFile"
-Write-Output "*********************************************************************"`n
+Write-ToLog "Script run time: $Timestamp"
+Write-ToLog "Logging to file: $logFile"
+Write-ToLog "************************************************"
 
 ### Sanity Checks ###
 
 # Sanity Check #1 - Does the import file exist?
 if (Test-Path -Path $importFile) {
-    Write-Output "Using the following file for import: $importFile"
+    Write-ToLog "Using the following file for import: $importFile"
 } else {
-    Write-Output "Could not find import file: $importFile"
+    Write-ToLog "Could not find import file: $importFile"
     Exit 1
 }
 
@@ -88,60 +120,63 @@ if (Test-Path -Path $importFile) {
 $lastWrite = (get-item $importFile).LastWriteTime
 $timespan = new-timespan -days $accpetableFileAge
 if (((get-date) - $lastWrite) -gt $timespan) {
-    Write-Output "Import file $importFile is more than $accpetableFileAge days old. Exiting script."
+    Write-ToLog "Import file $importFile is more than $accpetableFileAge days old. Exiting script."
     Exit 1
     } else {
-    Write-Output "Import file $importFile was last modified $lastWrite."
+    Write-ToLog "Import file $importFile was last modified $lastWrite. That's less than $accpetableFileAge day(s). Proceeding."
     }
 
 # Sanity Check #3 - Is the import file significantly different in size from the directory?
 # Gather the CSV file as an array. NOTE, this is also the import for the rest of the script.
 $userID = Import-CSV $importFile
 $userIDCount = $userID.count
-Write-Output "Skyward Student count: $userIDCount"
+Write-ToLog "Skyward Student count: $userIDCount"
 $currentActive = get-aduser -Filter 'enabled -eq $true' -SearchBase $baseOU
 $currentActiveCount = $currentActive.count
-Write-Output "AD Active Student count: $currentActiveCount"
+Write-ToLog "AD Active Student count: $currentActiveCount"
 
 # We now howve our numbers, but we must calculate the percentages and differences
 $acceptableChange = $currentActiveCount * ( $acceptablePercentChange / 100 )
-Write-Output "Allowable change percentage set to $acceptablePercentChange. Sanity Check triggered at a differene of more than $acceptableChange students."
+Write-ToLog "Allowable change percentage set to $acceptablePercentChange."
+Write-ToLog "Sanity Check triggered at a differene of more than $acceptableChange students."
 $aboutToChangeCount = [math]::abs( $currentActiveCount - $userIDCount )
 if ($aboutToChangeCount -gt $acceptableChange) {
     #The change is too big. Stop before we break something!
-    Write-Output "Change of $aboutToChangeCount is too many. Sanity Check Failed. Quiting before we break something!"
+    Write-ToLog "Change of $aboutToChangeCount is too many. Sanity Check Failed. Quiting before we break something!"
     Exit 1
     } else {
-    Write-Output "Change of $aboutToChangeCount is withing sanity check paramiter. Proceding."
+    Write-ToLog "Change of $aboutToChangeCount is withing sanity check paramiter. Proceding."
     }
 
 #Okay, we passed all Sanity checks.
-Write-Output "`nAll Sanity Checks passed. This script will now make changes to the directory."
-Write-Output "Script begins in $countdown seconds. Press Ctrl-C now to exit."
-while ($countDown -ne 0) {
-    Write-Output "$countDown..."
-    Start-Sleep -s 1
-    $countdown = $countDown - 1
+Write-ToLog "All Sanity Checks passed. This script will now make changes to the directory."
+If ($countDown -ne 0) {
+    Write-ToLog "Script begins in $countdown seconds. Press Ctrl-C now to exit."
+    while ($countDown -ne 0) {
+        Write-Output "$countDown..."
+        Start-Sleep -s 1
+        $countdown = $countDown - 1
+        }
     }
 
 # Let's enable any disabled users who already exist in AD that should now be enabled:
-Write-Output `n"The Following users should be enabled:"`n
+Write-ToLog "The Following users should be enabled:"
 $enabledUserCount = 0
 foreach ($user in $userID) {
     $otherID = $user.OtherID
     $fullName = $user.StuFullName
     $disabledUser = get-aduser -Filter {Samaccountname -eq $otherID -and Enabled -eq $false} | select -ExpandProperty SamAccountName
     if ($disabledUser.count -gt 0) {
-        Write-Output "Enabling $fullname ($disabledUser)."
+        Write-ToLog "Enabling $fullname ($disabledUser)." -writeToChangelog
         Set-ADUser -Identity $disabledUser -Enabled $true
         $enabledUserCount++
     }
 }
-Write-Output "$enabledUserCount user(s) enabled."
+Write-ToLog "$enabledUserCount user(s) enabled."
 
 # Now we create users who don't exist yet. This script uses the Skyward OtherID as the student's 
 # SAMAccountID in AD. Everything is based on that OtherID value. 
-Write-output `n"The Follwoing Users need to be created:"`n
+Write-ToLog "The Follwoing Users need to be created:"
 $createdUserCount = 0
 foreach ($user in $userID) {
     $otherID = $user.OtherID
@@ -166,7 +201,7 @@ foreach ($user in $userID) {
     $setPassword = $user.Student_Network_Password
     $createUser = Get-ADUser -filter "sAMAccountName -eq '$otherID'"
     if ($createUser -eq $null) {
-        Write-Output "Creating $fullName ($otherID)." #Time to make the user.
+        Write-ToLog "Creating $fullName ($otherID)." -writeToChangelog #Time to make the user.
         New-ADUser `
         -SamAccountName $otherID `
         -UserPrincipalName $emailAddress `
@@ -176,8 +211,11 @@ foreach ($user in $userID) {
         -Surname $lastName `
         -DisplayName "$lastName, $firstName" `
         -Description "Class of $gradYear" `
+        -Department "$gradYear" `
         -Enabled $True `
+        -CannotChangePassword $True `
         -ChangePasswordAtLogon $False `
+        -PasswordNeverExpires $True `
         -path "OU=$gradYear,$baseOU" `
         -HomeDrive "Z:" `
         -HomeDirectory $finalHomeDir `
@@ -206,9 +244,9 @@ foreach ($user in $userID) {
     
 }
 
-Write-Output "$createdUserCount user(s) created."
+Write-ToLog "$createdUserCount user(s) created."
 
-write-output `n"The Following Users should be disabled:"`n
+Write-ToLog "The Following Users should be disabled:"
 
 #Gather the current list of students so we can see if an exist in AD where they do not show up in the
 #downloaded file:
@@ -218,14 +256,27 @@ foreach ($stu in $currentStu) {
     $otherID = $userID.OtherID
     if ($otherID -notcontains $stu) {
             #Does not Exist, so disable.
-            write-output "$stu is being disabled..."
+            $disableUserName = get-aduser $stu | select -ExpandProperty Name
+            Write-ToLog "$disableUserName ($stu) is being disabled..." -writeToChangelog
             Set-ADUser -Identity $stu -Enabled $false
             $disabledUserCount++
         } else {
             #Exists. Do nothing.
         }
 }
-Write-Output "$disabledUserCount user(s) disabled."
+Write-ToLog "$disabledUserCount user(s) disabled."
+
+if ($runGCDS = $true) {
+    #We are going to update Google's accounts with the GCDS utility now.
+    Write-ToLog "Running GCDS..."
+    try { 
+        start-process $gcdsProgLocation -argumentlist "-a -c `"$gcdsConfig`"" -Wait -NoNewWindow   
+        Write-ToLog "GCDS utility finished!"
+        #Let's give Google a few seconds to absorb the changes before we try to update passwords...
+        start-sleep -s 5
+        }
+    catch { Write-ToLog "Error running GCDS: $_.Exception,Message" }
+}    
 
 # Time to reset passwords if they had changed. We store a copy of the passwords in the AD attribute
 # "Office" in order to do a comparison. This is purly for convienece. It is NOT secure. But student
@@ -233,16 +284,16 @@ Write-Output "$disabledUserCount user(s) disabled."
 # for this in the future. Likely the best thing would be to set the password once, then have the
 # student change it and have a mechanism to reset it. But 2nd graders are horrible at passwords...
 # This is a compromise we are currently willing to accept.
-Write-Output "Resetting Known Passwords..."
+Write-ToLog "Resetting Known Passwords..."
 
 foreach ($user in $userID) {
     $otherID = $user.OtherID
     $fullName = $user.StuFullName
     If ($user.Student_Network_Password -eq "") {
-        #The Custom form "Student_Netowrk_Password" is not set, so we're going to use the Skyward Access Password.
+        #The Custom form Student_Netowrk_Password is not set, so we're going to use the Skyward Access Password.
         $setPassword = $user.StuAccessPass
         } else {
-        #Since the "Student_Network_Password is set, we'll use that here.
+        #Since the Student_Network_Password is set, we'll use that here.
         $setPassword = $user.Student_Network_Password
         }
     $setInADpass = Get-ADUser $otherID -Properties PhysicalDeliveryOfficeName |select -ExpandProperty PhysicalDeliveryOfficeName
@@ -251,9 +302,9 @@ foreach ($user in $userID) {
         } else {
         #Password looks new from Skyward. Update password to AD and write it in the Office space for easy access.
         if ($setPassword -eq "") {
-            Write-Output "Password from Skyward is blank for $fullname ($otherID). Doing Nothing."
+            Write-ToLog "Password from Skyward is blank for $fullname ($otherID). Doing Nothing."
                 } else {
-            Write-Output "Updating Password from Skyward to AD for $fullName ($otherID)."
+            Write-ToLog "Updating Password from Skyward to AD for $fullName ($otherID)." -writeToChangelog
             Set-ADUser -Identity $otherID -Office $setPassword
             Set-ADAccountPassword -Identity $otherID -NewPassword (convertto-securestring $setPassword -AsPlainText -Force)
             }
@@ -261,8 +312,11 @@ foreach ($user in $userID) {
 }
 
 # We need to export a CSV that can be imported back to Skyward easily. Here we create that CSV.
+Write-ToLog "Generating Export File..."
+try { get-aduser -Filter 'enabled -eq $true' -properties * -SearchBase $baseOU | Select-Object SAMaccountname, mail, office |export-csv -path $exportFile }
+catch { Write-ToLog "Cannot create generate export file: $_.Exception,Message" }
 
 #All done. End logging.
-Write-Output "Script Complete!"
+Write-ToLog "Script Complete!"
 
 Stop-Transcript
